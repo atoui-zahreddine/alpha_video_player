@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TS Video Player</title>
+    <link href="https://vjs.zencdn.net/7.15.4/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/7.15.4/video.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.js"></script>
+  </head>
+  <body>
+    <input
+      type="text"
+      id="video-url"
+      placeholder="Enter video URL (MP2T)"
+      style="width: 80%"
+    />
+    <button onclick="playVideo()">Play Video</button>
+
+    <video
+      id="video-player"
+      class="video-js vjs-default-skin"
+      controls
+      autoplay
+      preload="auto"
+      width="640"
+      height="360"
+    ></video>
+
+    <script>
+      function playVideo() {
+        const videoUrl = document.getElementById("video-url").value;
+        const videoPlayer = videojs("video-player");
+
+        if (window.mpegts) {
+          const mpegts = window.mpegts;
+          if (mpegts.getFeatureList().mseLivePlayback) {
+            const player = mpegts.createPlayer({
+              type: "mpegts",
+              url: "http://0.0.0.0:8081/" + videoUrl,
+              liveBufferLatencyChasing: true,
+            });
+
+            player.attachMediaElement(
+              document.getElementById("video-player_html5_api")
+            );
+
+            // Enhanced error handling
+            player.on("error", function (e) {
+              console.error("Player error:", e);
+              // Attempt to recover
+              setTimeout(() => {
+                player.unload();
+                player.load();
+                player.play();
+              }, 3000);
+            });
+
+            player.on("loading_complete", function () {
+              console.log("Loading completed");
+            });
+
+            // Add statistics monitoring
+            player.on("statistics_info", function (stats) {
+              console.log("Buffer size:", stats.videoBufferSize);
+              console.log("Current speed:", stats.currentKbps, "kbps");
+            });
+
+            player.load();
+            player.play();
+          } else {
+            alert("MPEG-TS live streaming is not supported in this browser.");
+          }
+        } else {
+          alert("MPEGTS.js is not loaded.");
+        }
+      }
+    </script>
+  </body>
+</html>
