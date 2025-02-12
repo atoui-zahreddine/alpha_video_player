@@ -28,18 +28,40 @@
     ></video>
 
     <script>
-      const { ipcRenderer } = require('electron');
-      let currentPlayer = null;  // Add this to track the current player instance
+      const { ipcRenderer } = require("electron");
+      let currentPlayer = null;
+      let videoJsPlayer = null;
 
-      function playVideo() {
-        // Clean up existing player if it exists
+      async function cleanupPlayer() {
         if (currentPlayer) {
-          currentPlayer.destroy();
-          currentPlayer = null;
+          try {
+            await currentPlayer.pause();
+            await currentPlayer.unload();
+            currentPlayer.destroy();
+            currentPlayer = null;
+          } catch (error) {
+            console.error("Cleanup error:", error);
+          }
         }
 
+        if (videoJsPlayer) {
+          videoJsPlayer.reset();
+        }
+      }
+
+      async function playVideo() {
+        await cleanupPlayer();
+
         const videoUrl = document.getElementById("video-url").value;
-        const videoPlayer = videojs("video-player");
+
+        // Initialize video.js player if not already done
+        if (!videoJsPlayer) {
+          videoJsPlayer = videojs("video-player", {
+            techOrder: ["html5"],
+            autoplay: true,
+            controls: true,
+          });
+        }
 
         if (window.mpegts) {
           const mpegts = window.mpegts;
@@ -54,38 +76,48 @@
               lazyLoad: false,
               fixAudioTimestampGap: true,
               customLoader: {
-                load: async function(context, config) {
+                load: async function (context, config) {
                   try {
-                    const response = await ipcRenderer.invoke('proxy-request', { 
+                    const response = await ipcRenderer.invoke("proxy-request", {
                       url: context.url,
-                      isLive: true 
+                      isLive: true,
                     });
-                    
+
                     if (response.status === 200) {
-                      context.onSuccess(response.status, response.headers, response.data);
+                      context.onSuccess(
+                        response.status,
+                        response.headers,
+                        response.data
+                      );
                     } else {
                       context.onError({
                         code: response.status,
-                        msg: `HTTP Error: ${response.status}`
+                        msg: `HTTP Error: ${response.status}`,
                       });
                     }
                   } catch (error) {
                     context.onError({
                       code: -1,
-                      msg: error.message
+                      msg: error.message,
                     });
                   }
                 },
-                abort: function() {
+                abort: function () {
                   // Implement proper abort handling for live streams
                   console.log("Stream aborted");
-                }
-              }
+                },
+              },
             });
 
-            player.attachMediaElement(
-              document.getElementById("video-player_html5_api")
+            currentPlayer = player;
+
+            // Get the raw video element from video.js
+            const videoElement = document.getElementById(
+              "video-player_html5_api"
             );
+
+            // Attach to the raw video element
+            player.attachMediaElement(videoElement);
 
             // Enhanced error handling
             player.on("error", function (e) {
@@ -101,13 +133,8 @@
               console.log("Loading completed");
             });
 
-            player.on("statistics_info", function (stats) {
-              console.log("Buffer size:", stats.videoBufferSize);
-              console.log("Current speed:", stats.currentKbps, "kbps");
-            });
-
             // Add live stream specific event handlers
-            player.on('statistics_info', function(stats) {
+            player.on("statistics_info", function (stats) {
               if (stats.totalBytes > 0) {
                 const currentLatency = stats.currentLatency || 0;
                 if (currentLatency > 3) {
@@ -117,13 +144,13 @@
               }
             });
 
-            player.on('loading_complete', function() {
-              console.log('Stream connected');
+            player.on("loading_complete", function () {
+              console.log("Stream connected");
             });
 
             // Add automatic reconnection
-            player.on('error', function(e) {
-              console.error('Player error:', e);
+            player.on("error", function (e) {
+              console.error("Player error:", e);
               // More aggressive reconnection for live streams
               setTimeout(() => {
                 player.unload();
