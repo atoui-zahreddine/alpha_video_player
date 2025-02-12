@@ -29,8 +29,15 @@
 
     <script>
       const { ipcRenderer } = require('electron');
+      let currentPlayer = null;  // Add this to track the current player instance
 
       function playVideo() {
+        // Clean up existing player if it exists
+        if (currentPlayer) {
+          currentPlayer.destroy();
+          currentPlayer = null;
+        }
+
         const videoUrl = document.getElementById("video-url").value;
         const videoPlayer = videojs("video-player");
 
