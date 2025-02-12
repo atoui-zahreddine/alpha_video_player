@@ -1,54 +1,49 @@
-const { app, BrowserWindow } = require('electron');
-const path = require('path');
-const express = require("express");
-const cors = require("cors");
+const { app, BrowserWindow, ipcMain, session } = require("electron");
 const axios = require("axios");
 
-// Setup Express server
-const setupServer = () => {
-  const server = express();
-  server.use(cors());
-
-  server.get("/:url(**)", async (req, res) => {
-    try {
-      console.info("Proxy Request:", req.params.url);
-      const fullUrl = req.params.url + (req.query ? '?' + new URLSearchParams(req.query).toString() : '');
-      console.info("Full URL:", fullUrl);
-      
-      const response = await axios({
-        method: "GET",
-        url: fullUrl,
-        headers: {
-          "User-Agent": "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
-          Connection: "Keep-Alive",
-          "Accept-Encoding": "identity",
-          "Icy-MetaData": "1",
+// Handle proxy requests through IPC
+ipcMain.handle("proxy-request", async (event, { url, isLive }) => {
+  try {
+    const response = await axios({
+      method: "GET",
+      url: url,
+      headers: {
+        "User-Agent":
+          "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
+        Connection: "Keep-Alive",
+        "Accept-Encoding": "identity",
+        "Icy-MetaData": "1",
+      },
+      // Add these options to prevent Axios from modifying headers
+      transformRequest: [
+        function (data, headers) {
+          // Prevent Axios from adding its own User-Agent
+          delete headers.common["User-Agent"];
+          return data;
         },
-        responseType: "stream",
-        httpVersion: "1.1",
-        validateStatus: false
-      });
+      ],
+      responseType: "arraybuffer",
+      httpVersion: "1.1",
+      validateStatus: false,
+      timeout: isLive ? 0 : 30000,
+    });
 
-      res.status(response.status);
-      Object.entries(response.headers).forEach(([key, value]) => {
-        res.setHeader(key, value);
-      });
-      response.data.pipe(res);
-    } catch (error) {
-      if (error.response) {
-        res.status(error.response.status);
-        Object.entries(error.response.headers).forEach(([key, value]) => {
-          res.setHeader(key, value);
-        });
-        error.response.data.pipe(res);
-      } else {
-        res.status(502).send('Bad Gateway');
-      }
+    return {
+      status: response.status,
+      headers: response.headers,
+      data: response.data,
+    };
+  } catch (error) {
+    if (error.response) {
+      return {
+        status: error.response.status,
+        headers: error.response.headers,
+        data: error.response.data,
+      };
     }
-  });
-
-  return server;
-}
+    throw new Error("Stream Connection Failed");
+  }
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -56,29 +51,36 @@ function createWindow() {
     height: 600,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
-    }
+      contextIsolation: false,
+    },
   });
 
-  // Start the proxy server
-  const server = setupServer();
-  const PORT = 8081;
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Proxy server running on http://0.0.0.0:${PORT}`);
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const customHeaders = {
+      "User-Agent": "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
+      Accept: "*/*",
+      "Accept-Encoding": "identity",
+      Connection: "Keep-Alive",
+      "Icy-MetaData": "1",
+    };
+
+    callback({
+      requestHeaders: { ...details.requestHeaders, ...customHeaders },
+    });
   });
 
-  win.loadFile('index.html');
+  win.loadFile("index.html");
 }
 
 app.whenReady().then(createWindow);
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-app.on('activate', () => {
+app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }

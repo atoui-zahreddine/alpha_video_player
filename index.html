@@ -28,27 +28,100 @@
     ></video>
 
     <script>
-      function playVideo() {
+      const { ipcRenderer } = require("electron");
+      let currentPlayer = null;
+      let videoJsPlayer = null;
+
+      async function cleanupPlayer() {
+        if (currentPlayer) {
+          try {
+            await currentPlayer.pause();
+            await currentPlayer.unload();
+            currentPlayer.destroy();
+            currentPlayer = null;
+          } catch (error) {
+            console.error("Cleanup error:", error);
+          }
+        }
+
+        if (videoJsPlayer) {
+          videoJsPlayer.reset();
+        }
+      }
+
+      async function playVideo() {
+        await cleanupPlayer();
+
         const videoUrl = document.getElementById("video-url").value;
-        const videoPlayer = videojs("video-player");
+
+        // Initialize video.js player if not already done
+        if (!videoJsPlayer) {
+          videoJsPlayer = videojs("video-player", {
+            techOrder: ["html5"],
+            autoplay: true,
+            controls: true,
+          });
+        }
 
         if (window.mpegts) {
           const mpegts = window.mpegts;
           if (mpegts.getFeatureList().mseLivePlayback) {
             const player = mpegts.createPlayer({
               type: "mpegts",
-              url: "http://0.0.0.0:8081/" + videoUrl,
+              url: videoUrl,
+              isLive: true,
               liveBufferLatencyChasing: true,
+              liveSync: true,
+              liveSyncLatencyMax: 1.5,
+              lazyLoad: false,
+              fixAudioTimestampGap: true,
+              customLoader: {
+                load: async function (context, config) {
+                  try {
+                    const response = await ipcRenderer.invoke("proxy-request", {
+                      url: context.url,
+                      isLive: true,
+                    });
+
+                    if (response.status === 200) {
+                      context.onSuccess(
+                        response.status,
+                        response.headers,
+                        response.data
+                      );
+                    } else {
+                      context.onError({
+                        code: response.status,
+                        msg: `HTTP Error: ${response.status}`,
+                      });
+                    }
+                  } catch (error) {
+                    context.onError({
+                      code: -1,
+                      msg: error.message,
+                    });
+                  }
+                },
+                abort: function () {
+                  // Implement proper abort handling for live streams
+                  console.log("Stream aborted");
+                },
+              },
             });
 
-            player.attachMediaElement(
-              document.getElementById("video-player_html5_api")
+            currentPlayer = player;
+
+            // Get the raw video element from video.js
+            const videoElement = document.getElementById(
+              "video-player_html5_api"
             );
+
+            // Attach to the raw video element
+            player.attachMediaElement(videoElement);
 
             // Enhanced error handling
             player.on("error", function (e) {
               console.error("Player error:", e);
-              // Attempt to recover
               setTimeout(() => {
                 player.unload();
                 player.load();
@@ -60,10 +133,30 @@
               console.log("Loading completed");
             });
 
-            // Add statistics monitoring
+            // Add live stream specific event handlers
             player.on("statistics_info", function (stats) {
-              console.log("Buffer size:", stats.videoBufferSize);
-              console.log("Current speed:", stats.currentKbps, "kbps");
+              if (stats.totalBytes > 0) {
+                const currentLatency = stats.currentLatency || 0;
+                if (currentLatency > 3) {
+                  // Try to catch up if we're falling behind
+                  player.currentTime = player.buffered.end(0) - 1;
+                }
+              }
+            });
+
+            player.on("loading_complete", function () {
+              console.log("Stream connected");
+            });
+
+            // Add automatic reconnection
+            player.on("error", function (e) {
+              console.error("Player error:", e);
+              // More aggressive reconnection for live streams
+              setTimeout(() => {
+                player.unload();
+                player.load();
+                player.play();
+              }, 1000);
             });
 
             player.load();
