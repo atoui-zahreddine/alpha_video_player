@@ -1,54 +1,45 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const express = require("express");
-const cors = require("cors");
 const axios = require("axios");
 
-// Setup Express server
-const setupServer = () => {
-  const server = express();
-  server.use(cors());
+// Handle proxy requests through IPC
+ipcMain.handle('proxy-request', async (event, { url, isLive }) => {
+  try {
+    const fullUrl = url + (query ? '?' + new URLSearchParams(query).toString() : '');
+    console.info("Proxy Request:", fullUrl);
+    
+    const response = await axios({
+      method: "GET",
+      url: fullUrl,
+      headers: {
+        "User-Agent": "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
+        Connection: "Keep-Alive",
+        "Accept-Encoding": "identity",
+        "Icy-MetaData": "1",
+      },
+      responseType: "arraybuffer",
+      httpVersion: "1.1",
+      validateStatus: false,
+      timeout: isLive ? 0 : 30000, // No timeout for live streams
+      maxRedirects: 5
+    });
 
-  server.get("/:url(**)", async (req, res) => {
-    try {
-      console.info("Proxy Request:", req.params.url);
-      const fullUrl = req.params.url + (req.query ? '?' + new URLSearchParams(req.query).toString() : '');
-      console.info("Full URL:", fullUrl);
-      
-      const response = await axios({
-        method: "GET",
-        url: fullUrl,
-        headers: {
-          "User-Agent": "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
-          Connection: "Keep-Alive",
-          "Accept-Encoding": "identity",
-          "Icy-MetaData": "1",
-        },
-        responseType: "stream",
-        httpVersion: "1.1",
-        validateStatus: false
-      });
-
-      res.status(response.status);
-      Object.entries(response.headers).forEach(([key, value]) => {
-        res.setHeader(key, value);
-      });
-      response.data.pipe(res);
-    } catch (error) {
-      if (error.response) {
-        res.status(error.response.status);
-        Object.entries(error.response.headers).forEach(([key, value]) => {
-          res.setHeader(key, value);
-        });
-        error.response.data.pipe(res);
-      } else {
-        res.status(502).send('Bad Gateway');
-      }
+    return {
+      status: response.status,
+      headers: response.headers,
+      data: response.data
+    };
+  } catch (error) {
+    if (error.response) {
+      return {
+        status: error.response.status,
+        headers: error.response.headers,
+        data: error.response.data
+      };
     }
-  });
-
-  return server;
-}
+    throw new Error('Stream Connection Failed');
+  }
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -58,13 +49,6 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false
     }
-  });
-
-  // Start the proxy server
-  const server = setupServer();
-  const PORT = 8081;
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Proxy server running on http://0.0.0.0:${PORT}`);
   });
 
   win.loadFile('index.html');
