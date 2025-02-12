@@ -1,43 +1,47 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
-const path = require('path');
+const { app, BrowserWindow, ipcMain, session } = require("electron");
 const axios = require("axios");
 
 // Handle proxy requests through IPC
-ipcMain.handle('proxy-request', async (event, { url, isLive }) => {
+ipcMain.handle("proxy-request", async (event, { url, isLive }) => {
   try {
-    const fullUrl = url + (query ? '?' + new URLSearchParams(query).toString() : '');
-    console.info("Proxy Request:", fullUrl);
-    
     const response = await axios({
       method: "GET",
-      url: fullUrl,
+      url: url,
       headers: {
-        "User-Agent": "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
+        "User-Agent":
+          "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
         Connection: "Keep-Alive",
         "Accept-Encoding": "identity",
         "Icy-MetaData": "1",
       },
+      // Add these options to prevent Axios from modifying headers
+      transformRequest: [
+        function (data, headers) {
+          // Prevent Axios from adding its own User-Agent
+          delete headers.common["User-Agent"];
+          return data;
+        },
+      ],
       responseType: "arraybuffer",
       httpVersion: "1.1",
       validateStatus: false,
-      timeout: isLive ? 0 : 30000, // No timeout for live streams
-      maxRedirects: 5
+      timeout: isLive ? 0 : 30000,
     });
 
     return {
       status: response.status,
       headers: response.headers,
-      data: response.data
+      data: response.data,
     };
   } catch (error) {
     if (error.response) {
       return {
         status: error.response.status,
         headers: error.response.headers,
-        data: error.response.data
+        data: error.response.data,
       };
     }
-    throw new Error('Stream Connection Failed');
+    throw new Error("Stream Connection Failed");
   }
 });
 
@@ -47,22 +51,36 @@ function createWindow() {
     height: 600,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
-    }
+      contextIsolation: false,
+    },
   });
 
-  win.loadFile('index.html');
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const customHeaders = {
+      "User-Agent": "ALPHA Player/5.0.2 (Linux;Android 14) ExoPlayerLib/2.11.3",
+      Accept: "*/*",
+      "Accept-Encoding": "identity",
+      Connection: "Keep-Alive",
+      "Icy-MetaData": "1",
+    };
+
+    callback({
+      requestHeaders: { ...details.requestHeaders, ...customHeaders },
+    });
+  });
+
+  win.loadFile("index.html");
 }
 
 app.whenReady().then(createWindow);
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-app.on('activate', () => {
+app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
